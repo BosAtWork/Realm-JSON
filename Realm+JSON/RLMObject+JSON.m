@@ -25,7 +25,8 @@ static id MCValueFromInvocation(id object, SEL selector) {
 static NSString *MCTypeStringFromPropertyKey(Class class, NSString *key) {
 	const objc_property_t property = class_getProperty(class, [key UTF8String]);
 	if (!property) {
-		[NSException raise:NSInternalInconsistencyException format:@"Class %@ does not have property %@", class, key];
+		return nil;
+		//[NSException raise:NSInternalInconsistencyException format:@"Class %@ does not have property %@", class, key];
 	}
 	const char *type = property_getAttributes(property);
 	return [NSString stringWithUTF8String:type];
