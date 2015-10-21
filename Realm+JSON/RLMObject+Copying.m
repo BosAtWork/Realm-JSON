@@ -20,30 +20,51 @@
 @implementation RLMObject (Copying)
 
 - (instancetype)shallowCopy {
-    id object = [[[self class] alloc] init];
+    id object = [[NSClassFromString(self.objectSchema.className) alloc] init];
     [object mergePropertiesFromObject:self];
     
     return object;
 }
 
 - (void)mergePropertiesFromObject:(id)object {
+    
+    BOOL primaryKeyIsEmpty;
+    id value;
+    id selfValue;
+    
+    BOOL (^valuesAreEqual)(id, id) = ^BOOL(id value1, id value2) {
+        return ([[NSString stringWithFormat:@"%@", value1]
+                 isEqualToString:[NSString stringWithFormat:@"%@", value2]]);
+    };
+    
     for (RLMProperty *property in self.objectSchema.properties) {
-        // assume array
-        if (property.type == RLMPropertyTypeArray) {
+        
+        if (property.type != RLMPropertyTypeArray) {
+
+            // asume data
+            value = [object valueForKeyPath:property.name];
+            selfValue = [self valueForKeyPath:property.name];
+
+            primaryKeyIsEmpty = (property.isPrimary &&
+                                 !valuesAreEqual(value, selfValue)
+                                 );
+            
+            if (primaryKeyIsEmpty || !property.isPrimary) {
+                [self setValue:value forKeyPath:property.name];
+            }
+        
+        } else {
+            // asume array
             RLMArray *thisArray = [self valueForKeyPath:property.name];
             RLMArray *thatArray = [object valueForKeyPath:property.name];
             [thisArray addObjects:thatArray];
         }
-        // assume data
-        else if (!property.isPrimary) {
-            id value = [object valueForKeyPath:property.name];
-            [self setValue:value forKeyPath:property.name];
-        }
     }
 }
 
+
 - (instancetype)deepCopy {
-    RLMObject *object = [[[self class] alloc] init];
+    RLMObject *object = [[NSClassFromString(self.objectSchema.className) alloc] init];
     
     for (RLMProperty *property in self.objectSchema.properties) {
 

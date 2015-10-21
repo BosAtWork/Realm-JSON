@@ -62,23 +62,23 @@ static NSInteger const kCreateBatchSize = 100;
 + (NSArray *)createOrUpdateInRealm:(RLMRealm *)realm withJSONArray:(NSArray *)array {
     NSInteger count = array.count;
     NSMutableArray *result = [NSMutableArray array];
-    
+
     for (NSInteger index=0; index*kCreateBatchSize<count; index++) {
         NSInteger size = MIN(kCreateBatchSize, count-index*kCreateBatchSize);
         @autoreleasepool {
-            for (NSInteger subIndex=index*kCreateBatchSize; subIndex<size; subIndex++) {
-                NSDictionary *dictionary = array[subIndex];
+            for (NSInteger subIndex=0; subIndex<size; subIndex++) {
+                NSDictionary *dictionary = array[index*kCreateBatchSize+subIndex];
                 id object = [self createOrUpdateInRealm:realm withJSONDictionary:dictionary];
                 [result addObject:object];
             }
         }
     }
-    
+
     return [result copy];
 }
 
 + (instancetype)createOrUpdateInRealm:(RLMRealm *)realm withJSONDictionary:(NSDictionary *)dictionary {
-	return [self createOrUpdateInRealm:realm withObject:[self mc_createObjectFromJSONDictionary:dictionary]];
+	return [self createOrUpdateInRealm:realm withValue:[self mc_createObjectFromJSONDictionary:dictionary]];
 }
 
 + (instancetype)objectInRealm:(RLMRealm *)realm withPrimaryKeyValue:(id)primaryKeyValue {
@@ -104,7 +104,7 @@ static NSInteger const kCreateBatchSize = 100;
 }
 
 - (instancetype)initWithJSONDictionary:(NSDictionary *)dictionary {
-	self = [self initWithObject:[[self class] mc_createObjectFromJSONDictionary:dictionary]];
+	self = [self initWithValue:[[self class] mc_createObjectFromJSONDictionary:dictionary]];
 	if (self) {
 	}
 	return self;
@@ -160,66 +160,57 @@ static NSInteger const kCreateBatchSize = 100;
 + (id)mc_createObjectFromJSONDictionary:(NSDictionary *)dictionary {
 	NSMutableDictionary *result = [NSMutableDictionary dictionary];
 	NSDictionary *mapping = [[self class] mc_inboundMapping];
-    
+
 	for (NSString *dictionaryKeyPath in mapping) {
 		NSString *objectKeyPath = mapping[dictionaryKeyPath];
 
 		id value = [dictionary valueForKeyPath:dictionaryKeyPath];
+
 		if (value) {
-            
 			Class propertyClass = [[self class] mc_classForPropertyKey:objectKeyPath];
 
-			if ([propertyClass isSubclassOfClass:[RLMObject class]]) {
+			NSValueTransformer *transformer = [[self class] mc_transformerForPropertyKey:objectKeyPath];
+			if (transformer) {
+				value = [transformer transformedValue:value];
+			}
+			else if ([propertyClass isSubclassOfClass:[RLMObject class]]) {
 				if (!value || [value isEqual:[NSNull null]]) {
 					continue;
 				}
 
-                if ([value isKindOfClass:[NSDictionary class]]) {
-                    value = [propertyClass mc_createObjectFromJSONDictionary:value];
-                } else {
-                    NSValueTransformer *transformer = [[self class] mc_transformerForPropertyKey:objectKeyPath];
-                    
-                    if (transformer) {
-                        value = [transformer transformedValue:value];
-                    }
-                }
-			}
-			else if ([propertyClass isSubclassOfClass:[RLMArray class]]) {
-                RLMProperty *property = [self mc_propertyForPropertyKey:objectKeyPath];
-                Class elementClass = [RLMSchema classForString: property.objectClassName];
-                
-                NSMutableArray *array = [NSMutableArray array];
-                for (id item in(NSArray*) value) {
-                    [array addObject:[elementClass mc_createObjectFromJSONDictionary:item]];
-                }
-                value = [array copy];
-			}
-			else {
-				NSValueTransformer *transformer = [[self class] mc_transformerForPropertyKey:objectKeyPath];
-
-				if (transformer) {
-					value = [transformer transformedValue:value];
+				if ([value isKindOfClass:[NSDictionary class]]) {
+					value = [propertyClass mc_createObjectFromJSONDictionary:value];
 				}
 			}
-            
-            if ([objectKeyPath isEqualToString:@"self"]) {
-                return value;
-            }
-            
-            NSArray *keyPathComponents = [objectKeyPath componentsSeparatedByString:@"."];
-            id currentDictionary = result;
-            for (NSString *component in keyPathComponents) {
-                if ([currentDictionary valueForKey:component] == nil) {
-                    [currentDictionary setValue:[NSMutableDictionary dictionary] forKey:component];
-                }
-                currentDictionary = [currentDictionary valueForKey:component];
-            }
+			else if ([propertyClass isSubclassOfClass:[RLMArray class]]) {
+				RLMProperty *property = [self mc_propertyForPropertyKey:objectKeyPath];
+				Class elementClass = [RLMSchema classForString: property.objectClassName];
+
+				NSMutableArray *array = [NSMutableArray array];
+				for (id item in(NSArray*) value) {
+					[array addObject:[elementClass mc_createObjectFromJSONDictionary:item]];
+				}
+				value = [array copy];
+			}
+
+			if ([objectKeyPath isEqualToString:@"self"]) {
+				return value;
+			}
+
+			NSArray *keyPathComponents = [objectKeyPath componentsSeparatedByString:@"."];
+			id currentDictionary = result;
+			for (NSString *component in keyPathComponents) {
+				if ([currentDictionary valueForKey:component] == nil) {
+					[currentDictionary setValue:[NSMutableDictionary dictionary] forKey:component];
+				}
+				currentDictionary = [currentDictionary valueForKey:component];
+			}
 
 			[result setValue:value forKeyPath:objectKeyPath];
 		}
 	}
-    
-    return [result copy];
+
+	return [result copy];
 }
 
 - (id)mc_createJSONDictionary {
@@ -233,7 +224,11 @@ static NSInteger const kCreateBatchSize = 100;
 		if (value) {
 			Class propertyClass = [[self class] mc_classForPropertyKey:objectKeyPath];
 
-			if ([propertyClass isSubclassOfClass:[RLMObject class]]) {
+			NSValueTransformer *transformer = [[self class] mc_transformerForPropertyKey:objectKeyPath];
+			if (transformer) {
+				value = [transformer reverseTransformedValue:value];
+			}
+			else if ([propertyClass isSubclassOfClass:[RLMObject class]]) {
 				value = [value mc_createJSONDictionary];
 			}
 			else if ([propertyClass isSubclassOfClass:[RLMArray class]]) {
@@ -242,13 +237,6 @@ static NSInteger const kCreateBatchSize = 100;
 					[array addObject:[item mc_createJSONDictionary]];
 				}
 				value = [array copy];
-			}
-			else {
-				NSValueTransformer *transformer = [[self class] mc_transformerForPropertyKey:objectKeyPath];
-
-				if (transformer) {
-					value = [transformer reverseTransformedValue:value];
-				}
 			}
 
 			if ([dictionaryKeyPath isEqualToString:@"self"]) {
@@ -275,7 +263,7 @@ static NSInteger const kCreateBatchSize = 100;
 
 + (NSDictionary *)mc_defaultInboundMapping {
     RLMObjectSchema *schema = [self sharedSchema];
-    
+
 	NSMutableDictionary *result = [NSMutableDictionary dictionary];
     for (RLMProperty *property in schema.properties) {
         result[[property.name camelToSnakeCase]] = property.name;
@@ -287,11 +275,11 @@ static NSInteger const kCreateBatchSize = 100;
 
 + (NSDictionary *)mc_defaultOutboundMapping {
     RLMObjectSchema *schema = [self sharedSchema];
-    
+
     NSMutableDictionary *result = [NSMutableDictionary dictionary];
     for (RLMProperty *property in schema.properties) {
         result[property.name] = [property.name camelToSnakeCase];
-        
+
     }
 
 	return [result copy];
@@ -300,10 +288,11 @@ static NSInteger const kCreateBatchSize = 100;
 #pragma mark - Convenience Methods
 
 + (NSDictionary *)mc_inboundMapping {
-	static NSMutableDictionary *mappingForClassName = nil;
-	if (!mappingForClassName) {
-		mappingForClassName = [NSMutableDictionary dictionary];
-	}
+    static NSMutableDictionary *mappingForClassName = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        mappingForClassName = [NSMutableDictionary dictionary];
+    });
 
 	NSDictionary *mapping = mappingForClassName[[self className]];
 	if (!mapping) {
@@ -320,10 +309,11 @@ static NSInteger const kCreateBatchSize = 100;
 }
 
 + (NSDictionary *)mc_outboundMapping {
-	static NSMutableDictionary *mappingForClassName = nil;
-	if (!mappingForClassName) {
-		mappingForClassName = [NSMutableDictionary dictionary];
-	}
+    static NSMutableDictionary *mappingForClassName = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        mappingForClassName = [NSMutableDictionary dictionary];
+    });
 
 	NSDictionary *mapping = mappingForClassName[[self className]];
 	if (!mapping) {
@@ -352,10 +342,11 @@ static NSInteger const kCreateBatchSize = 100;
 + (Class)mc_classForPropertyKey:(NSString *)key {
 	NSString *attributes = MCTypeStringFromPropertyKey(self, key);
 	if ([attributes hasPrefix:@"T@"]) {
-		static NSCharacterSet *set = nil;
-		if (!set) {
-			set = [NSCharacterSet characterSetWithCharactersInString:@"\"<"];
-		}
+        static NSCharacterSet *set = nil;
+        static dispatch_once_t onceToken;
+        dispatch_once(&onceToken, ^{
+            set = [NSCharacterSet characterSetWithCharactersInString:@"\"<"];
+        });
 
 		NSString *string;
 		NSScanner *scanner = [NSScanner scannerWithString:attributes];
